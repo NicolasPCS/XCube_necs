@@ -1,4 +1,4 @@
-_shapenet_path: "../data/shapenet/"
+_shapenet_path: "../../data/shapenet/" #"../../data/shapenet/"
 _shapenet_categories: ['02691156', '02828884', '02933112', '02958343', '03211117', '03001627', '03636649',
                        '03691459', '04090263', '04256520', '04379243', '04401088', '04530566']
 _shapenet_custom_name: "shapenet"
@@ -18,7 +18,7 @@ val_kwargs:
   onet_base_path: ${_shapenet_path}
   resolution: ${resolution}
   categories: ${_shapenet_categories}
-  custom_name: ${_shapenet_custom_name}
+  custom_name: ${_shapenet_custom_name} 
   split: "val"
   random_seed: "fixed"
 

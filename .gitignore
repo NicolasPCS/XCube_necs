@@ -161,3 +161,4 @@ build/
 slurm/
 checkpoints/
 results/
+data/

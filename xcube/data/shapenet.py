@@ -47,6 +47,11 @@ class ShapeNetDataset(RandomSafeDataset):
         for c in categories:
             self.onet_base_paths[c] = Path(onet_base_path + "/" + c)
             split_file = self.onet_base_paths[c] / (split + '.lst')
+            
+            print(f'Split: {split_file}')
+
+            print("Existe?", Path("../../data/shapenet/128/02691156/val.lst").resolve().exists())
+
             with split_file.open('r') as f:
                 models_c = f.read().split('\n')
             if '' in models_c:

@@ -1,4 +1,4 @@
-name: xcube
+name: xcube_env
 channels:
   - pyg
   - nvidia/label/cuda-12.1.0
