@@ -27,7 +27,17 @@ class ShapeNetDataset(RandomSafeDataset):
 
         self.resolution = resolution
         onet_base_path = os.path.join(onet_base_path, str(resolution))
-             
+
+        # Added by Nicolás - Delete if it's not necessary
+        home_path = os.path.expanduser("~")
+
+        # Remove leading '/' to avoid inserting 'home' before 'data'
+        rel_onet_base_path = os.path.relpath(onet_base_path, "/")
+        if rel_onet_base_path.startswith("home/"):
+            rel_onet_base_path = rel_onet_base_path[len("home/"):]
+        onet_base_path = os.path.join(home_path, "XCube_necs", rel_onet_base_path)
+        print("onet_base_path:", onet_base_path)
+
         self.skip_on_error = skip_on_error
         self.custom_name = custom_name
 
@@ -47,10 +57,6 @@ class ShapeNetDataset(RandomSafeDataset):
         for c in categories:
             self.onet_base_paths[c] = Path(onet_base_path + "/" + c)
             split_file = self.onet_base_paths[c] / (split + '.lst')
-            
-            print(f'Split: {split_file}')
-
-            print("Existe?", Path("../../data/shapenet/128/02691156/val.lst").resolve().exists())
 
             with split_file.open('r') as f:
                 models_c = f.read().split('\n')

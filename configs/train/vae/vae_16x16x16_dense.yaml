@@ -24,6 +24,7 @@ anneal_end_iter: 70000 # need to adjust for different dataset
 
 supervision:
   structure_weight: 20.0
+  symmetry_weight: 1.0 # Added by Nicolás
   normal_weight: 300.0
   
 optimizer: "Adam"

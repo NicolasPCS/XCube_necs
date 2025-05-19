@@ -48,6 +48,7 @@ adaptive_policy:
 
 supervision:
   structure_weight: 20.0
+  symmetry_weight: 1.0 # Added by Nicolás
 
   gt_type: "PointTSDFVolume"
 

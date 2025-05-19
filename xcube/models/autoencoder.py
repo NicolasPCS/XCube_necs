@@ -158,11 +158,13 @@ class Model(BaseModel):
                                                         current_epoch=self.current_epoch)
 
         if not is_val:
+            # Training: Log losses and latent variables
             self.log_dict_prefix('train_loss', loss_dict)
             self.log_dict_prefix('train_loss', latent_dict)
             if self.hparams.enable_anneal:
                 self.log('anneal_kl_weight', self.loss.get_kl_weight(self.global_step))
         else:
+            # Validation: Log metrics adn losses
             self.log_dict_prefix('val_metric', metric_dict)
             self.log_dict_prefix('val_loss', loss_dict)
             self.log_dict_prefix('val_loss', latent_dict)

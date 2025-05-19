@@ -154,7 +154,7 @@ class Loss(nn.Module):
 
         if not self.hparams.use_hash_tree:
             gt_grid = out['gt_grid']
-            if self.hparams.supervision.structure_weight > 0.0:
+            if self.hparams.supervision.structure_weight > 0.0: # Indicates how much the loss of structure weighs (structure loss)
                 for feat_depth, pd_struct_i in out['structure_features'].items():
                     downsample_factor = 2 ** feat_depth
                     if self.hparams.remain_h:
@@ -169,11 +169,46 @@ class Loss(nn.Module):
                         dyn_grid_i = dynamic_grid
                     loss_dict.add_loss(f"struct-{feat_depth}", self.cross_entropy(pd_struct_i, gt_grid_i, dyn_grid_i),
                                     self.hparams.supervision.structure_weight)
+                    
+                    # Added by Nicolás
+                    if self.hparams.supervision.symmetry_weight > 0.0: 
+                        jidx = pd_struct_i.feature.jidx.to(dtype=torch.int16)
+
+                        if jidx.numel() == 0:
+                            print(f"[Simmetry Loss] Warning: jidx is empty at depth {feat_depth}, skipping symmetry loss.")
+                        else:
+
+                            ijk_coords = pd_struct_i.grid.ijk_enabled  # esto debería darte tensor [N, 3]
+                            #print("ijk coords shape:", ijk_coords.r_shape)
+
+                            coords = pd_struct_i.grid.ijk_enabled.jdata.float().to(dtype=torch.float32) # (N, 3)
+
+                            batch_size = jidx.max().item() + 1
+
+                            #print("jidx.shape", jidx.shape)
+                            #print("coords", coords.shape[0])
+                            #print("batch_size", batch_size)
+
+                            points = fvdb.JaggedTensor.from_data_and_jidx(coords, jidx, batch_size)
+                            values = pd_struct_i.feature
+
+                            #print("points", points)
+                            #print("values", values)
+
+                            dense_voxel = pd_struct_i.grid.splat_trilinear(points, values)
+                            dense_tensor = dense_voxel.jdata
+
+                            #print("dense_tensor", dense_tensor)
+                            
+                            sym_loss = self.compute_symmetry_loss(pd_struct_i.jdata, axis=0)
+                            if torch.isfinite(sym_loss):
+                                loss_dict.add_loss(f"symmetry-{feat_depth}", sym_loss, self.hparams.supervision.symmetry_weight)
+                    
                     if compute_metric:
                         with torch.no_grad():
                             metric_dict.add_loss(f"struct-acc-{feat_depth}", self.struct_acc(pd_struct_i, gt_grid_i))
         else:
-            if self.hparams.supervision.structure_weight > 0.0:
+            if self.hparams.supervision.structure_weight > 0.0 and self.hparams.supervision.symmetry_weight > 0.0: # Added by Nicolás
                 gt_tree = out['gt_tree']
                 for feat_depth, pd_struct_i in out['structure_features'].items():
                     gt_grid_i = gt_tree[feat_depth]
@@ -181,6 +216,49 @@ class Loss(nn.Module):
                     dyn_grid_i = dynamic_grid.coarsened_grid(2 ** feat_depth) if dynamic_grid is not None else None
                     loss_dict.add_loss(f"struct-{feat_depth}", self.cross_entropy(pd_struct_i, gt_grid_i, dyn_grid_i),
                                     self.hparams.supervision.structure_weight)
+                    
+                    # Added by Nicolás
+                    if self.hparams.supervision.symmetry_weight > 0.0:
+                        
+                        """ print("dir(feature):", dir(pd_struct_i.feature))
+                        print("feature attrs:", pd_struct_i.feature.__dir__)
+
+                        print("grid attrs:", dir(pd_struct_i.grid)) """
+
+                        jidx = pd_struct_i.feature.jidx.to(dtype=torch.int16)
+
+                        if jidx.numel() == 0:
+                            print(f"[Simmetry Loss] Warning: jidx is empty at depth {feat_depth}, skipping symmetry loss.")
+                        else:
+
+                            ijk_coords = pd_struct_i.grid.ijk_enabled  # esto debería darte tensor [N, 3]
+                            #print("ijk coords shape:", ijk_coords.r_shape)
+
+                            coords = pd_struct_i.grid.ijk_enabled.jdata.float().to(dtype=torch.float32) # (N, 3)
+
+                            batch_size = jidx.max().item() + 1
+
+                            #print("jidx.shape", jidx.shape)
+                            #print("coords", coords.shape[0])
+                            #print("batch_size", batch_size)
+
+                            points = fvdb.JaggedTensor.from_data_and_jidx(coords, jidx, batch_size)
+                            values = pd_struct_i.feature
+
+                            #print("points", points)
+                            #print("values", values)
+
+                            dense_voxel = pd_struct_i.grid.splat_trilinear(points, values)
+                            dense_tensor = dense_voxel.jdata
+
+                            #print("dense_tensor", dense_tensor)
+                            
+                            sym_loss = self.compute_symmetry_loss(pd_struct_i.jdata, axis=0)
+                            if torch.isfinite(sym_loss):
+                                loss_dict.add_loss(f"symmetry-{feat_depth}", sym_loss, self.hparams.supervision.symmetry_weight)
+                                print("sym-loss: ", sym_loss)
+
+                        #raise SystemExit
                     if compute_metric:
                         with torch.no_grad():
                             metric_dict.add_loss(f"struct-acc-{feat_depth}", self.struct_acc(pd_struct_i, gt_grid_i))
@@ -234,3 +312,11 @@ class Loss(nn.Module):
                 loss_dict.add_loss("kld", kld, self.hparams.kl_weight)
             
         return loss_dict, metric_dict, latent_dict
+    
+    # Added by Nicolás
+    def compute_symmetry_loss(self, voxel_tensor, axis=0):
+        # Penalize the difference between the predicted object and its reflection
+        # axis: reflection axis (0 is for the x axis - YZ plane)
+        reflected = torch.flip(voxel_tensor, dims=[axis])
+        return torch.nn.functional.cross_entropy(voxel_tensor, reflected)
+        #return torch.nn.functional.mse_loss(voxel_tensor, reflected, reduction='mean')
