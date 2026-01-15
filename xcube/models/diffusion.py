@@ -863,7 +863,7 @@ class Model(BaseModel):
             # AMSGrad also do some corrections to the original Adam.
             # The learning rate here is the maximum rate we can reach for each parameter.                   
             optimizer = torch.optim.AdamW(self.trainer.model.parameters(), lr=lr_config['init'],
-                                        weight_decay=self.hparams.weight_decay, amsgrad=True)
+                                        weight_decay=self.hparams.weight_decay, amsgrad=True, foreach=False) # foreach=False added by Nicolas
         else:
             raise NotImplementedError
 

@@ -13,7 +13,7 @@ use_input_semantic: false
 use_input_intensity: false
 
 # setup KL loss
-cut_ratio: 32 # reduce the dimension of the latent space
+cut_ratio: 16 #32 # reduce the dimension of the latent space
 kl_weight: 0.03 # activate when anneal is off
 normalize_kld: true
 enable_anneal: false
@@ -42,7 +42,7 @@ network:
     target: "StructPredictionNet"
     params:
       in_channels: 32
-      num_blocks: ${tree_depth}
+      num_blocks: ${tree_depth} #4
       f_maps: 64
       neck_dense_type: "HAND_CRAFTED"
       neck_bound: [8, 8, 8]

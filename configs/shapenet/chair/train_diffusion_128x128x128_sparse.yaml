@@ -13,7 +13,7 @@ use_pos_embed_world: false
 use_pos_embed: true
 
 vae_config: "configs/shapenet/chair/train_vae_128x128x128_sparse.yaml"
-vae_checkpoint: "checkpoints/chair/fine_vae/last.ckpt"
+vae_checkpoint: " /home/ncaytuir/data-local/wandb/xcube-shapenet/tx0qs392/checkpoints/last.ckpt"
 
 network:
   diffuser:

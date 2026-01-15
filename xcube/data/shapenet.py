@@ -48,9 +48,8 @@ class ShapeNetDataset(RandomSafeDataset):
             self.onet_base_paths[c] = Path(onet_base_path + "/" + c)
             split_file = self.onet_base_paths[c] / (split + '.lst')
             
-            print(f'Split: {split_file}')
-
-            print("Existe?", Path("../../data/shapenet/128/02691156/val.lst").resolve().exists())
+            #print(f'Split: {split_file}')
+            #print("Existe?", Path("../../data/XCube_DatasetV2/128/02691156/val.lst").resolve().exists())
 
             with split_file.open('r') as f:
                 models_c = f.read().split('\n')

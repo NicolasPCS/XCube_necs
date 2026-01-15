@@ -162,7 +162,7 @@ if __name__ == '__main__':
     program_parser.add_argument('--eval_interval', type=int, default=1, help='How often to evaluate the model.')
     program_parser.add_argument('--save_every', default=50, type=int, help='How often to save the model.')
     program_parser.add_argument('--resume_from_ckpt', default=None, type=str, help='checkpoint path we want to load')
-    program_parser.add_argument('--model_precision', default=32, help='Model precision to use.')
+    program_parser.add_argument('--model_precision', default=32, help='Model precision to use.') 
     program_parser.add_argument('--seed', type=int, default=0, help='Set a random seed.')
     program_parser = pl.Trainer.add_argparse_args(program_parser)
     # Remove some args, which we think should be model-based.
@@ -295,6 +295,7 @@ if __name__ == '__main__':
     # Set checkpoint auto-save options.
     last_ckpt_path = None
     if program_args.resume_from_ckpt is not None:
+        print("[LOG] Resumed from ckpt ", program_args.resume_from_ckpt)
         last_ckpt_path = program_args.resume_from_ckpt
     
     if program_args.logger_type == 'tb':

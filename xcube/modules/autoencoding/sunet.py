@@ -237,6 +237,11 @@ class StructPredictionNet(nn.Module):
                  use_checkpoint=False, **kwargs):
         super().__init__()
         n_features = [in_channels] + [f_maps * 2 ** k for k in range(num_blocks)]
+        print("MODEL RECONSTRUCTED WITH:")
+        print("in_channels =", in_channels)
+        print("n_features =", n_features)
+        print("f_maps =", f_maps)
+        print("num_blocks =", num_blocks)
         logger.info("latent dim: {}".format(int(n_features[-1] / cut_ratio)))
         self.encoders = nn.ModuleList()
         self.pre_kl_bottleneck = nn.ModuleList()
