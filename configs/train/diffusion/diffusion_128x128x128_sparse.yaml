@@ -1,7 +1,7 @@
 model: diffusion
 
 vae_config: "" # "configs/shapenet/plane/train_vae_128x128x128_sparse.yaml" # Added by Nicolás
-vae_checkpoint: "" # "/home/ncaytuir/data-local/wandb/xcube-shapenet/26c29o7a/last.ckpt" # Added by Nicolás
+vae_checkpoint: "" # "/home/isipiran/wandb/xcube-shapenet/26c29o7a/last.ckpt" # Added by Nicolás
 
 use_pos_embed_world: true
 log_image: false # upsampler model does not log image for speed up

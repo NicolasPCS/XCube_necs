@@ -14,7 +14,7 @@ parser.add_argument("is_coarse", type=bool, help="Whether the voxel grid is coar
 args = parser.parse_args()
 
 #input_path = "/home/ncaytuir/data/Datasets/ShapeNetCore.v6.PC15k/02691156"
-#output_path = "/home/ncaytuir/data-local/XCube_necs/data/XCube_DatasetV2/128/02691156"
+#output_path = "/home/isipiran/XCube_necs/data/XCube_DatasetV2/128/02691156"
 
 input_path = args.input_path
 output_path = args.output_path

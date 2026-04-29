@@ -13,4 +13,4 @@ use_pos_embed_world: false
 use_pos_embed: true
 
 vae_config: "configs/shapenet/car/train_vae_128x128x128_sparse.yaml"
-vae_checkpoint: "/home/ncaytuir/data-local/wandb/xcube-shapenet/gou7ub9d/checkpoints/last.ckpt"
+vae_checkpoint: "/home/isipiran/wandb/xcube-shapenet/ue0ac8z7/checkpoints/last.ckpt"

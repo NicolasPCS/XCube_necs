@@ -1,7 +1,7 @@
 model: diffusion
 
-vae_config: "" # "/home/ncaytuir/data-local/XCube_necs/configs/shapenet/plane/train_vae_16x16x16_dense.yaml" # Added by Nicolás - Change later
-vae_checkpoint: "" # "/home/ncaytuir/data-local/wandb/xcube-shapenet/y98joza4/checkpoints/last.ckpt" # Added by Nicolás - Change later
+vae_config: "" # "/home/isipiran/XCube_necs/configs/shapenet/plane/train_vae_16x16x16_dense.yaml" # Added by Nicolás - Change later
+vae_checkpoint: "" # "/home/isipiran/wandb/xcube-shapenet/y98joza4/checkpoints/last.ckpt" # Added by Nicolás - Change later
 
 voxel_size: 0.01
 resolution: 128

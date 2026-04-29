@@ -53,28 +53,34 @@ random_seed(known_args.seed)
 # setup model config and path
 if known_args.category == "chair":
     config_coarse = "configs/shapenet/chair/train_diffusion_16x16x16_dense.yaml" 
-    ckpt_coarse = "checkpoints/chair/coarse_diffusion/last.ckpt"
+    #ckpt_coarse = "checkpoints/chair/coarse_diffusion/last.ckpt"
+    ckpt_coarse = "/home/isipiran/wandb/xcube-shapenet/83f13urg/checkpoints/last.ckpt"
 
     config_fine = "configs/shapenet/chair/train_diffusion_128x128x128_sparse.yaml"
-    ckpt_fine = "checkpoints/chair/fine_diffusion/last.ckpt"
+    #ckpt_fine = "checkpoints/chair/fine_diffusion/last.ckpt"
+    ckpt_fine = "/home/isipiran/wandb/xcube-shapenet/qxzae5cr/checkpoints/last.ckpt"
 
     config_nksr = "configs/shapenet/chair/train_nksr_refine.yaml"
     ckpt_nksr = "checkpoints/chair/nksr_refine/last.ckpt"
 elif known_args.category == "car":
     config_coarse = "configs/shapenet/car/train_diffusion_16x16x16_dense.yaml"
-    ckpt_coarse = "checkpoints/car/coarse_diffusion/last.ckpt"
+    #ckpt_coarse = "checkpoints/car/coarse_diffusion/last.ckpt"
+    ckpt_coarse = "/home/isipiran/wandb/xcube-shapenet/665wxnqj/checkpoints/last.ckpt"
 
     config_fine = "configs/shapenet/car/train_diffusion_128x128x128_sparse.yaml"
-    ckpt_fine = "checkpoints/car/fine_diffusion/last.ckpt"
+    #ckpt_fine = "checkpoints/car/fine_diffusion/last.ckpt"
+    ckpt_fine = "/home/isipiran/wandb/xcube-shapenet/573u3020/checkpoints/last.ckpt"
 
     config_nksr = "configs/shapenet/car/train_nksr_refine.yaml"
     ckpt_nksr = "checkpoints/car/nksr_refine/last.ckpt"
 elif known_args.category == "plane":
     config_coarse = "configs/shapenet/plane/train_diffusion_16x16x16_dense.yaml"
-    ckpt_coarse = "/home/ncaytuir/data-local/wandb/xcube-shapenet/gl9d8zts/checkpoints/last.ckpt"
+    #ckpt_coarse = "/home/isipiran/wandb/xcube-shapenet/gl9d8zts/checkpoints/last.ckpt"
+    ckpt_coarse = "/home/isipiran/wandb/xcube-shapenet/2wz5l363/checkpoints/last.ckpt"
 
     config_fine = "configs/shapenet/plane/train_diffusion_128x128x128_sparse.yaml"
-    ckpt_fine = "/home/ncaytuir/data-local/wandb/xcube-shapenet/7k5fxe16/checkpoints/last.ckpt"
+    #ckpt_fine = "/home/isipiran/wandb/xcube-shapenet/7k5fxe16/checkpoints/last.ckpt"
+    ckpt_fine = "/home/isipiran/wandb/xcube-shapenet/b2iqdmvn/checkpoints/last.ckpt"
 
     config_nksr = "configs/shapenet/plane/train_nksr_refine.yaml"
     ckpt_nksr = "checkpoints/plane/nksr_refine/last.ckpt"
@@ -143,10 +149,10 @@ with torch.no_grad():
             xyz_coarse = result_dict['coarse_xyz']
             xyz_fine = result_dict['fine_xyz']
 
-            result_path2 = os.path.join(save_folder, "pc1_%d.npy" % num_sample)
-            np.save(result_path2, xyz_coarse)
+            #result_path2 = os.path.join(save_folder, "pc1_%d.npy" % num_sample)
+            #np.save(result_path2, xyz_coarse)
 
-            result_path3 = os.path.join(save_folder, "pc2_%d.npy" % num_sample)
+            result_path3 = os.path.join(save_folder, "fine_pc_%d.npy" % num_sample)
             np.save(result_path3, xyz_fine)
             # UNTIL HERE
                     

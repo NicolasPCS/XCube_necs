@@ -1,6 +1,6 @@
 import torch
 
-path = "/home/ncaytuir/data-local/XCube_necs/data/XCube_DatasetV2/128/02691156/1a04e3eab45ca15dd86060f189eb133.pkl"
+path = "/home/isipiran/XCube_necs/data/XCube_DatasetV2/128/02691156/1a04e3eab45ca15dd86060f189eb133.pkl"
 
 obj = torch.load(path, map_location="cpu")
 

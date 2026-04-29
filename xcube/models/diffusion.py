@@ -671,7 +671,7 @@ class Model(BaseModel):
         * @param cond_dict: conditional dictionary -> only pass if manully effort needed
         * @param res_coarse: previous stage result (semantics, normals, etc) for conditional diffusion
         """
-        if grids is None: 
+        if grids is None:
             if batch is not None:
                 latents = self.extract_latent(batch)
                 grids = latents.grid
@@ -795,6 +795,151 @@ class Model(BaseModel):
         
         return VDBTensor(grid=grids, feature=grids.jagged_like(latents))
     
+    def evaluation_api_with_mirroring(self, batch = None, grids: GridBatch = None, batch_size: int = None, latent_prev: VDBTensor = None, 
+                       use_ddim=False, ddim_step=100, use_ema=True, use_dpm=False, use_karras=False, solver_order=3,
+                       h_stride=1, guidance_scale: float = 1.0, 
+                       cond_dict=None, res_coarse=None, guided_grid=None):
+        """
+        * @param grids: GridBatch from previous stage for conditional diffusion
+        * @param batch_size: batch_size for unconditional diffusion
+        * @param latent_prev: previous stage latent for conditional diffusion; not implemented yet
+        * @param use_ddim: use DDIM or not
+        * @param ddim_step: number of steps for DDIM
+        * @param use_dpm: use DPM++ solver or not
+        * @param use_karras: use Karras noise schedule or not 
+        * @param solver_order: order of the solver; 3 for unconditional diffusion, 2 for guided sampling
+        * @param use_ema: use EMA or not
+        * @param h_stride: flag for remain_h VAE to create a anisotropic latent grid
+        * @param cond_dict: conditional dictionary -> only pass if manully effort needed
+        * @param res_coarse: previous stage result (semantics, normals, etc) for conditional diffusion
+        """
+        if grids is None:
+            if batch is not None:
+                latents = self.extract_latent(batch)
+                grids = latents.grid
+            else:
+                # use dense diffusion
+                # create a dense grid
+                assert batch_size is not None, "batch_size should be provided"
+                feat_depth = self.vae.hparams.tree_depth - 1
+                gap_stride = 2 ** feat_depth
+                gap_strides = [gap_stride, gap_stride, gap_stride // h_stride]
+                if isinstance(self.hparams.network.diffuser.image_size, int):
+                    neck_bound = int(self.hparams.network.diffuser.image_size / 2)
+                    low_bound = [-neck_bound] * 3
+                    voxel_bound = [neck_bound * 2] * 3
+                else:        
+                    voxel_bound = self.hparams.network.diffuser.image_size
+                    low_bound = [- int(res / 2) for res in self.hparams.network.diffuser.image_size]
+                
+                voxel_sizes = [sv * gap for sv, gap in zip(self.vae.hparams.voxel_size, gap_strides)] # !: carefully setup
+                origins = [sv / 2. for sv in voxel_sizes]
+                grids = fvdb.sparse_grid_from_dense(
+                                batch_size, 
+                                voxel_bound, 
+                                low_bound, 
+                                device="cpu", # hack to fix bugs
+                                voxel_sizes=voxel_sizes,
+                                origins=origins).to(self.device)
+        # parse the cond_dict
+        if cond_dict is None:
+            cond_dict = {}
+        if self.hparams.use_semantic_cond:
+            # check if semantics is in cond_dict
+            if 'semantics' not in cond_dict:
+                if batch is not None:
+                    cond_dict['semantics'] = fvdb.JaggedTensor(batch[DS.LATENT_SEMANTIC])
+                elif res_coarse is not None:
+                    cond_semantic = res_coarse.semantic_features[-1].feature.jdata # N, class_num
+                    cond_semantic = torch.argmax(cond_semantic, dim=1)
+                    cond_dict['semantics'] = grids.jagged_like(cond_semantic)
+                else:
+                    raise NotImplementedError("No semantics provided")
+        if self.hparams.use_normal_concat_cond:
+            # traing-time: get single scan crop from batch
+            if batch is not None:
+                ref_grid = fvdb.cat(batch[DS.INPUT_PC])    
+                ref_xyz = ref_grid.grid_to_world(ref_grid.ijk.float()) 
+                concat_normal = grids.splat_trilinear(ref_xyz, fvdb.JaggedTensor(batch[DS.TARGET_NORMAL]))
+            elif res_coarse is not None:
+                concat_normal = res_coarse.normal_features[-1].feature # N, 3
+                concat_normal.jdata /= (concat_normal.jdata.norm(dim=1, keepdim=True) + 1e-6) # avoid nan
+            else:
+                raise NotImplementedError("No normal provided")
+            cond_dict['normal'] = concat_normal                
+        
+        # diffusion process
+        if use_ema:
+            with self.ema_scope("Evaluation API"):
+                latents = self.random_sample_latents(grids, use_ddim=use_ddim, ddim_step=ddim_step, use_dpm=use_dpm, use_karras=use_karras, solver_order=solver_order,
+                                                     cond_dict=cond_dict, guidance_scale=guidance_scale)
+        else:
+            latents = self.random_sample_latents(grids, use_ddim=use_ddim, ddim_step=ddim_step, use_dpm=use_dpm, use_karras=use_karras, solver_order=solver_order,
+                                                     cond_dict=cond_dict, guidance_scale=guidance_scale)
+        # decode
+        res = self.vae.unet.FeaturesSet()
+        if guided_grid is None:
+            res, output_x = self.vae.unet.decode(res, latents, is_testing=True)
+        else:
+            res, output_x = self.vae.unet.decode(res, latents, guided_grid)
+        # TODO: add SDF output
+        return res, output_x
+    
+    def random_sample_latents_with_mirroring(self, grids: GridBatch, generator: torch.Generator = None, 
+                              use_ddim=False, ddim_step=None, use_dpm=False, use_karras=False, solver_order=3,
+                              cond_dict=None, guidance_scale=1.0) -> VDBTensor:
+        if use_ddim:
+            if ddim_step is None:
+                ddim_step = self.hparams.num_inference_steps
+            self.ddim_scheduler.set_timesteps(ddim_step, device=grids.device)
+            timesteps = self.ddim_scheduler.timesteps
+            scheduler = self.ddim_scheduler
+        elif use_dpm:
+            logger.info("Using DPM++ solver with order %d and karras %s" % (solver_order, use_karras))
+            if ddim_step is None:
+                ddim_step = self.hparams.num_inference_steps
+            try:
+                self.dpm_scheduler.set_timesteps(ddim_step, device=grids.device)
+            except:
+                # create a new dpm scheduler
+                self.dpm_scheduler = DPMSolverMultistepScheduler(
+                    num_train_timesteps=self.hparams.network.scheduler.num_train_timesteps,
+                    beta_start=self.hparams.network.scheduler.beta_start,
+                    beta_end=self.hparams.network.scheduler.beta_end,
+                    beta_schedule=self.hparams.network.scheduler.beta_schedule,
+                    solver_order=solver_order,
+                    prediction_type=self.hparams.network.scheduler.prediction_type,
+                    algorithm_type="dpmsolver++",
+                    use_karras_sigmas=use_karras,
+                )
+                self.dpm_scheduler.set_timesteps(ddim_step, device=grids.device)
+            timesteps = self.dpm_scheduler.timesteps
+            scheduler = self.dpm_scheduler
+        else:
+            timesteps = self.noise_scheduler.timesteps
+            scheduler = self.noise_scheduler
+        
+        # prepare the latents
+        latents = torch.randn(grids.total_voxels, self.unet.out_channels, device=grids.device, generator=generator)
+
+        
+        ref_xyz = ref_grid.grid_to_world(ref_grid.ijk.float()) 
+        
+        for i, t in tqdm(enumerate(timesteps)):
+            latent_model_input = latents
+            latent_model_input = scheduler.scale_model_input(latent_model_input, t)
+            # predict the noise residual
+            latent_model_input = VDBTensor(grid=grids, feature=grids.jagged_like(latent_model_input))
+            noise_pred = self._forward_cond(latent_model_input, t, cond_dict=cond_dict, is_testing=True, guidance_scale=guidance_scale) # TODO: cond
+            # compute the previous noisy sample x_t -> x_t-1
+            latents = scheduler.step(noise_pred.feature.jdata, t, latents).prev_sample # TODO: when there is scale model input, why there is latents
+            
+        # scale the latents to the original scale
+        if self.hparams.scale_by_std:
+            latents = 1. / self.scale_factor * latents
+        
+        return VDBTensor(grid=grids, feature=grids.jagged_like(latents))
+    
     def get_dataset_spec(self):
         all_specs = self.vae.get_dataset_spec()
         # further add new specs
@@ -863,7 +1008,7 @@ class Model(BaseModel):
             # AMSGrad also do some corrections to the original Adam.
             # The learning rate here is the maximum rate we can reach for each parameter.                   
             optimizer = torch.optim.AdamW(self.trainer.model.parameters(), lr=lr_config['init'],
-                                        weight_decay=self.hparams.weight_decay, amsgrad=True, foreach=False) # foreach=False added by Nicolas
+                                        weight_decay=self.hparams.weight_decay, amsgrad=True) # foreach=False added by Nicolas
         else:
             raise NotImplementedError
 
