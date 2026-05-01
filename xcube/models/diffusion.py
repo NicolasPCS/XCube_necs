@@ -52,6 +52,211 @@ def lambda_lr_wrapper(it, lr_config, batch_size):
         lr_config['decay_mult'] ** (int(it / lr_config['decay_step'])),
         lr_config['clip'] / lr_config['init'])
 
+# Helpers: Mirrors a Grid
+def build_grid_from_ijk_compatible(ijk_jagged, ref_grids, device):
+    """
+    Construye un GridBatch desde coordenadas ijk reflejadas,
+    usando la función disponible en la versión local de fvdb.
+    """
+
+    voxel_sizes = ref_grids.voxel_sizes
+    origins = ref_grids.origins
+
+    # Caso 1: API nueva/documentada
+    if hasattr(fvdb, "gridbatch_from_ijk"):
+        return fvdb.gridbatch_from_ijk(
+            ijk_jagged,
+            voxel_sizes=voxel_sizes,
+            origins=origins
+        ).to(device)
+
+    # Caso 2: posible API antigua usada en algunas versiones
+    if hasattr(fvdb, "sparse_grid_from_ijk"):
+        return fvdb.sparse_grid_from_ijk(
+            ijk_jagged,
+            voxel_sizes=voxel_sizes,
+            origins=origins
+        ).to(device)
+
+    # Caso 3: API funcional
+    if hasattr(fvdb, "functional") and hasattr(fvdb.functional, "gridbatch_from_ijk"):
+        return fvdb.functional.gridbatch_from_ijk(
+            ijk_jagged,
+            voxel_sizes=voxel_sizes,
+            origins=origins
+        ).to(device)
+
+    # Caso 4: método de clase
+    if hasattr(fvdb.GridBatch, "from_ijk"):
+        return fvdb.GridBatch.from_ijk(
+            ijk_jagged,
+            voxel_sizes=voxel_sizes,
+            origins=origins
+        ).to(device)
+
+    # Caso 5: crear GridBatch vacío y setear desde ijk
+    mirrored_grid = fvdb.GridBatch(device=device)
+
+    if hasattr(mirrored_grid, "set_from_ijk"):
+        mirrored_grid.set_from_ijk(
+            ijk_jagged,
+            voxel_sizes=voxel_sizes,
+            origins=origins
+        )
+        return mirrored_grid.to(device)
+
+    raise AttributeError(
+        "No encontré una función compatible para construir GridBatch desde ijk. "
+        "Prueba imprimir: [x for x in dir(fvdb) if 'ijk' in x.lower()]"
+    )
+
+def mirror_latents_by_grid(latents, grids, axis=0, atol=1e-6):
+    """
+    Refleja los voxeles activos de un GridBatch y mueve cada latente
+    junto con su voxel reflejado.
+
+    Entrada:
+        latents: Tensor plano (total_voxels, C), por ejemplo (4096, 32)
+        grids:   GridBatch original
+        axis:    eje de reflexión. axis=0 refleja X
+
+    Salida:
+        mirrored_grid:    GridBatch nuevo con los voxeles reflejados
+        mirrored_latents: Tensor plano (total_voxels, C) alineado con mirrored_grid
+    """
+
+    assert latents.ndim == 2, f"latents debe ser (N, C), pero llegó {latents.shape}"
+    assert latents.shape[0] == grids.total_voxels, (
+        f"Número de latentes ({latents.shape[0]}) no coincide con "
+        f"número de voxeles ({grids.total_voxels})"
+    )
+
+    device = latents.device
+    mirrored_ijk_list = []
+
+    # 1. Reflejar coordenadas ijk por cada elemento del batch
+    for b in range(grids.grid_count):
+        ijk_b = grids.ijk[b].jdata.long().clone().to(device)
+
+        voxel_size_b = grids.voxel_size_at(b).to(device)
+        origin_b = grids.origin_at(b).to(device)
+
+        origin_axis = origin_b[axis]
+        voxel_size_axis = voxel_size_b[axis]
+
+        mirrored_ijk_b = ijk_b.clone()
+
+        # Si origin_axis == 0:
+        #   world = ijk * voxel_size
+        #   mirror: ijk' = -ijk
+        #
+        # Si origin_axis != 0:
+        #   world = ijk * voxel_size + origin
+        #   mirror respecto a world=0:
+        #   ijk' = -ijk - 2*origin/voxel_size
+        if torch.isclose(
+            origin_axis,
+            torch.zeros_like(origin_axis),
+            atol=atol
+        ):
+            shift = 0
+        else:
+            raw_shift = 2.0 * origin_axis / voxel_size_axis
+            shift = int(torch.round(raw_shift).item())
+
+            # El shift debe ser entero para que ijk siga siendo coordenada discreta válida.
+            if not torch.isclose(
+                raw_shift,
+                torch.tensor(float(shift), device=device, dtype=raw_shift.dtype),
+                atol=atol
+            ):
+                raise ValueError(
+                    f"[mirror_latents_by_grid] shift no entero en batch={b}. "
+                    f"origin={origin_axis.item()}, "
+                    f"voxel_size={voxel_size_axis.item()}, "
+                    f"raw_shift={raw_shift.item()}"
+                )
+
+        mirrored_ijk_b[:, axis] = -mirrored_ijk_b[:, axis] - shift
+        mirrored_ijk_list.append(mirrored_ijk_b)
+
+        # Debug seguro
+        world_b = ijk_b.float() * voxel_size_b + origin_b
+        mirrored_world_b = mirrored_ijk_b.float() * voxel_size_b + origin_b
+        mirror_error = mirrored_world_b[:, axis] + world_b[:, axis]
+
+        """ print(
+            f"[DEBUG mirror] batch={b}, "
+            f"ijk_shape={tuple(ijk_b.shape)}, "
+            f"mirrored_ijk_shape={tuple(mirrored_ijk_b.shape)}, "
+            f"ijk_first={ijk_b[:5].detach().cpu().tolist()}, "
+            f"mirrored_ijk_first={mirrored_ijk_b[:5].detach().cpu().tolist()}, "
+            f"origin_axis={origin_axis.item():.8f}, "
+            f"voxel_size_axis={voxel_size_axis.item():.8f}, "
+            f"shift={shift}, "
+            f"max_world_mirror_error={mirror_error.abs().max().item():.8e}"
+        ) """
+
+    mirrored_ijk = fvdb.JaggedTensor(mirrored_ijk_list)
+
+    # 2. Construir el nuevo GridBatch reflejado.
+    # Esta es la función correcta según tu API de fvdb.
+    mirrored_grid = fvdb.sparse_grid_from_ijk(
+        mirrored_ijk,
+        voxel_sizes=grids.voxel_sizes,
+        origins=grids.origins
+    ).to(device)
+
+    assert mirrored_grid.total_voxels == grids.total_voxels, (
+        f"El grid reflejado tiene {mirrored_grid.total_voxels} voxeles, "
+        f"pero el original tiene {grids.total_voxels}."
+    )
+
+    # 3. Reordenar latentes según el orden interno del nuevo mirrored_grid.
+    #
+    # mirrored_ijk[b][i] es la coordenada reflejada del voxel original i.
+    # src_feat_b[i] es el latente que debe viajar con esa coordenada.
+    # idx_b[i] dice en qué posición interna quedó esa coordenada dentro de mirrored_grid.
+    mirrored_indices = mirrored_grid.ijk_to_index(mirrored_ijk).jdata.long().to(device)
+
+    if (mirrored_indices < 0).any():
+        bad = (mirrored_indices < 0).sum().item()
+        raise RuntimeError(
+            f"[mirror_latents_by_grid] Hay {bad} coordenadas reflejadas "
+            f"que no existen en mirrored_grid."
+        )
+
+    if mirrored_indices.numel() != latents.shape[0]:
+        raise RuntimeError(
+            f"[mirror_latents_by_grid] Mismatch: mirrored_indices tiene "
+            f"{mirrored_indices.numel()} elementos, pero latents tiene "
+            f"{latents.shape[0]}."
+        )
+
+    if mirrored_indices.max().item() >= mirrored_grid.total_voxels:
+        raise RuntimeError(
+            f"[mirror_latents_by_grid] ijk_to_index devolvió índices fuera "
+            f"del rango global. idx_min={mirrored_indices.min().item()}, "
+            f"idx_max={mirrored_indices.max().item()}, "
+            f"total_voxels={mirrored_grid.total_voxels}."
+        )
+
+    mirrored_latents = torch.empty_like(latents)
+    mirrored_latents[mirrored_indices] = latents
+
+    assert mirrored_latents.shape == latents.shape, (
+        f"mirrored_latents tiene shape {mirrored_latents.shape}, "
+        f"pero latents tiene shape {latents.shape}"
+    )
+
+    print("[DEBUG mirror final]")
+    print("  original voxels:", grids.total_voxels)
+    print("  mirrored voxels:", mirrored_grid.total_voxels)
+    print("  latents shape:", tuple(latents.shape))
+    print("  mirrored_latents shape:", tuple(mirrored_latents.shape))
+
+    return mirrored_grid, mirrored_latents
+
 class Model(BaseModel):
     def __init__(self, hparams):
         super().__init__(hparams)
@@ -257,10 +462,21 @@ class Model(BaseModel):
     @torch.no_grad()
     def load_first_stage_from_pretrained(self):
         model_yaml_path = Path(self.hparams.vae_config)
+        if not model_yaml_path.exists():
+            model_yaml_path = Path(str(model_yaml_path).replace(# Added by Nicolás. Error occurs when tries to load configs from patagon
+                "/home/isipiran/XCube_necs",
+                "/home/ncaytuir/data-local/XCube_necs"
+            ))
+        assert model_yaml_path.exists(), f"Selected VAE config does not exist: {model_yaml_path}"
         model_args = exp.parse_config_yaml(model_yaml_path)
         net_module = importlib.import_module("xcube.models." + model_args.model).Model
         args_ckpt = Path(self.hparams.vae_checkpoint)
-        assert args_ckpt.exists(), "Selected VAE checkpoint does not exist!"
+        if not args_ckpt.exists():
+            args_ckpt = Path(str(args_ckpt).replace(
+                "/home/isipiran/wandb/xcube-shapenet",
+                "/home/ncaytuir/data-local/wandb/xcube-shapenet_from_patagon"
+            ))
+        assert args_ckpt.exists(), "Selected VAE checkpoint does not exist!" # Added by Nicolás
         return net_module.load_from_checkpoint(args_ckpt, hparams=model_args)
 
     @rank_zero_only
@@ -813,6 +1029,7 @@ class Model(BaseModel):
         * @param cond_dict: conditional dictionary -> only pass if manully effort needed
         * @param res_coarse: previous stage result (semantics, normals, etc) for conditional diffusion
         """
+        print("[DEBUG Diffusion] entro en evaluation api with mirrorig")
         if grids is None:
             if batch is not None:
                 latents = self.extract_latent(batch)
@@ -866,28 +1083,96 @@ class Model(BaseModel):
                 concat_normal.jdata /= (concat_normal.jdata.norm(dim=1, keepdim=True) + 1e-6) # avoid nan
             else:
                 raise NotImplementedError("No normal provided")
-            cond_dict['normal'] = concat_normal                
+            cond_dict['normal'] = concat_normal   
+
+        print("[DEBUG Diffusion] entrando al proceso de difusión. Llamando a random_sample_latents_with_mirroring")             
         
         # diffusion process
         if use_ema:
             with self.ema_scope("Evaluation API"):
-                latents = self.random_sample_latents(grids, use_ddim=use_ddim, ddim_step=ddim_step, use_dpm=use_dpm, use_karras=use_karras, solver_order=solver_order,
-                                                     cond_dict=cond_dict, guidance_scale=guidance_scale)
+                latents, latents_mirrored = self.random_sample_latents_with_mirroring(
+                    grids,
+                    use_ddim=use_ddim,
+                    ddim_step=ddim_step,
+                    use_dpm=use_dpm,
+                    use_karras=use_karras,
+                    solver_order=solver_order,
+                    cond_dict=cond_dict,
+                    guidance_scale=guidance_scale
+                )
         else:
-            latents = self.random_sample_latents(grids, use_ddim=use_ddim, ddim_step=ddim_step, use_dpm=use_dpm, use_karras=use_karras, solver_order=solver_order,
-                                                     cond_dict=cond_dict, guidance_scale=guidance_scale)
+            latents, latents_mirrored = self.random_sample_latents_with_mirroring(
+                grids,
+                use_ddim=use_ddim,
+                ddim_step=ddim_step,
+                use_dpm=use_dpm,
+                use_karras=use_karras,
+                solver_order=solver_order,
+                cond_dict=cond_dict,
+                guidance_scale=guidance_scale
+            )
+        
+        print("[DEBUG Diffusion] saliendo proceso de difusión") 
+
         # decode
+        # =========================
+        # DECODE ORIGINAL
+        # =========================
         res = self.vae.unet.FeaturesSet()
+
         if guided_grid is None:
-            res, output_x = self.vae.unet.decode(res, latents, is_testing=True)
+            res, output_x = self.vae.unet.decode(
+                res,
+                latents,
+                is_testing=True
+            )
         else:
-            res, output_x = self.vae.unet.decode(res, latents, guided_grid)
-        # TODO: add SDF output
-        return res, output_x
-    
+            res, output_x = self.vae.unet.decode(
+                res,
+                latents,
+                guided_grid
+            )
+
+        # =========================
+        # DECODE MIRRORED
+        # =========================
+        res_mirrored = self.vae.unet.FeaturesSet()
+
+        if guided_grid is None:
+            res_mirrored, output_x_mirrored = self.vae.unet.decode(
+                res_mirrored,
+                latents_mirrored,
+                is_testing=True
+            )
+        else:
+            res_mirrored, output_x_mirrored = self.vae.unet.decode(
+                res_mirrored,
+                latents_mirrored,
+                guided_grid
+            )
+        
+        # =========================
+        # VALIDACIÓN
+        # =========================
+        if hasattr(res, "normal_features") and len(res.normal_features) > 0:
+            assert res.normal_features[-1].grid.total_voxels == output_x.grid.total_voxels, (
+                f"[ORIGINAL mismatch] output_x.grid={output_x.grid.total_voxels}, "
+                f"normal.grid={res.normal_features[-1].grid.total_voxels}"
+            )
+
+        if hasattr(res_mirrored, "normal_features") and len(res_mirrored.normal_features) > 0:
+            assert res_mirrored.normal_features[-1].grid.total_voxels == output_x_mirrored.grid.total_voxels, (
+                f"[MIRRORED mismatch] output_x_mirrored.grid={output_x_mirrored.grid.total_voxels}, "
+                f"normal.grid={res_mirrored.normal_features[-1].grid.total_voxels}"
+            )
+
+        return res, output_x, res_mirrored, output_x_mirrored
+
     def random_sample_latents_with_mirroring(self, grids: GridBatch, generator: torch.Generator = None, 
                               use_ddim=False, ddim_step=None, use_dpm=False, use_karras=False, solver_order=3,
                               cond_dict=None, guidance_scale=1.0) -> VDBTensor:
+        
+        print("[DEBUG Diffusion] entrando a random_sample_latents_with_mirroring") 
         if use_ddim:
             if ddim_step is None:
                 ddim_step = self.hparams.num_inference_steps
@@ -919,11 +1204,24 @@ class Model(BaseModel):
             timesteps = self.noise_scheduler.timesteps
             scheduler = self.noise_scheduler
         
+        print("[DEBUG Diffusion] generando latentes") 
         # prepare the latents
         latents = torch.randn(grids.total_voxels, self.unet.out_channels, device=grids.device, generator=generator)
-
         
-        ref_xyz = ref_grid.grid_to_world(ref_grid.ijk.float()) 
+        print("[DEBUG Diffusion] pasando a funcion para hacer mirror") 
+        mirrored_grids, mirrored_latents = mirror_latents_by_grid(latents, grids)
+        print("[DEBUG Diffusion] el mirror se hizo correctamente, procedemos con el proceso de difusión.")
+
+        """os.makedirs('/home/ncaytuir/data-local/XCube_necs/results/noises', exist_ok=True)
+
+        print(latents)
+        print(grids)
+        
+        ref_xyz = grids.grid_to_world(grids.ijk.float()).jdata.detach().cpu().numpy()
+        import random
+        np.savez(f'/home/ncaytuir/data-local/XCube_necs/results/noises/latent_noise_{random.randint(1,100)}.npz', coord=ref_xyz)
+        print("[DEBUG Diffusion] ruido guardado") """
+        #exit()
         
         for i, t in tqdm(enumerate(timesteps)):
             latent_model_input = latents
@@ -933,12 +1231,22 @@ class Model(BaseModel):
             noise_pred = self._forward_cond(latent_model_input, t, cond_dict=cond_dict, is_testing=True, guidance_scale=guidance_scale) # TODO: cond
             # compute the previous noisy sample x_t -> x_t-1
             latents = scheduler.step(noise_pred.feature.jdata, t, latents).prev_sample # TODO: when there is scale model input, why there is latents
+        
+        for i, t in tqdm(enumerate(timesteps)):
+            latent_model_input = mirrored_latents
+            latent_model_input = scheduler.scale_model_input(latent_model_input, t)
+            # predict the noise residual
+            latent_model_input = VDBTensor(grid=mirrored_grids, feature=mirrored_grids.jagged_like(latent_model_input))
+            noise_pred = self._forward_cond(latent_model_input, t, cond_dict=cond_dict, is_testing=True, guidance_scale=guidance_scale)
+            # compute the previous noisy sample x_t -> x_t-1
+            mirrored_latents = scheduler.step(noise_pred.feature.jdata, t, mirrored_latents).prev_sample
             
         # scale the latents to the original scale
         if self.hparams.scale_by_std:
             latents = 1. / self.scale_factor * latents
+            mirrored_latents = 1. / self.scale_factor * mirrored_latents
         
-        return VDBTensor(grid=grids, feature=grids.jagged_like(latents))
+        return VDBTensor(grid=grids, feature=grids.jagged_like(latents)), VDBTensor(grid=mirrored_grids, feature=mirrored_grids.jagged_like(mirrored_latents))
     
     def get_dataset_spec(self):
         all_specs = self.vae.get_dataset_spec()
