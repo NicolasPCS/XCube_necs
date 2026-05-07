@@ -12,5 +12,5 @@ conditioning_key: "concat" # "none", "adm", "concat"
 use_pos_embed_world: false
 use_pos_embed: true
 
-vae_config: "configs/shapenet/plane/train_vae_128x128x128_sparse.yaml"
+vae_config: "/home/isipiran/XCube_necs/configs/shapenet/plane/train_vae_128x128x128_sparse.yaml"
 vae_checkpoint: "/home/isipiran/wandb/xcube-shapenet/4sdh6wez/checkpoints/last.ckpt"
